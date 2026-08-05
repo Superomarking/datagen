@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/df-mc/datagen/data"
-	"github.com/df-mc/dragonfly/server/world/chunk"
+	"github.com/df-mc/dragonfly/server/world"
 	"github.com/samber/lo"
 	"github.com/sandertv/gophertunnel/minecraft/nbt"
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
@@ -77,7 +77,7 @@ func itemStackData(s protocol.ItemStack) ItemStackData {
 		if stack.Meta != 0 {
 			panic(fmt.Errorf("block item %s has non-zero metadata %d", stack.Name, stack.Meta))
 		}
-		_, props, ok := chunk.RuntimeIDToState(uint32(s.BlockRuntimeID))
+		_, props, ok := world.DefaultBlockRegistry.RuntimeIDToState(uint32(s.BlockRuntimeID))
 		if ok {
 			b, err := nbt.MarshalEncoding(props, nbt.LittleEndian)
 			if err != nil {
@@ -94,9 +94,9 @@ func itemStackData(s protocol.ItemStack) ItemStackData {
 type RecipeIngredientData struct {
 	BlockStates      []byte `json:"block_states,omitempty"`
 	Count            int32  `json:"count,omitempty"`
-	Meta             int16  `json:"meta,omitempty"`
+	Meta             int32  `json:"meta,omitempty"`
 	MolangExpression string `json:"molang_expression,omitempty"`
-	MolangVersion    byte   `json:"molang_version,omitempty"`
+	MolangVersion    int16  `json:"molang_version,omitempty"`
 	Name             string `json:"name,omitempty"`
 	Tag              string `json:"tag,omitempty"`
 }
@@ -107,9 +107,9 @@ func recipeIngredientData(c protocol.ItemDescriptorCount) RecipeIngredientData {
 	case *protocol.InvalidItemDescriptor:
 		panic("invalid item descriptor")
 	case *protocol.DefaultItemDescriptor:
-		ingredient.Name = data.ItemNetworkIDToName[int32(d.NetworkID)]
+		ingredient.Name = d.Name
 		if d.MetadataValue == 32767 {
-			_, props, ok := chunk.RuntimeIDToState(uint32(d.MetadataValue))
+			_, props, ok := world.DefaultBlockRegistry.RuntimeIDToState(uint32(d.MetadataValue))
 			if ok {
 				b, err := nbt.MarshalEncoding(props, nbt.LittleEndian)
 				if err != nil {
@@ -127,49 +127,11 @@ func recipeIngredientData(c protocol.ItemDescriptorCount) RecipeIngredientData {
 		ingredient.MolangVersion = d.Version
 	case *protocol.ItemTagItemDescriptor:
 		ingredient.Tag = d.Tag
-	case *protocol.DeferredItemDescriptor:
-		ingredient.Name = d.Name
-		if d.MetadataValue == 32767 {
-			_, props, ok := chunk.RuntimeIDToState(uint32(d.MetadataValue))
-			if ok {
-				b, err := nbt.MarshalEncoding(props, nbt.LittleEndian)
-				if err != nil {
-					panic(fmt.Errorf("failed to marshal block properties for item %s: %w", ingredient.Name, err))
-				}
-				ingredient.BlockStates = b
-			} else {
-				ingredient.Meta = d.MetadataValue
-			}
-		} else {
-			ingredient.Meta = d.MetadataValue
-		}
-	case *protocol.ComplexAliasItemDescriptor:
-		ingredient.Name = d.Name
 	}
 	if c.Count != 1 {
 		ingredient.Count = c.Count
 	}
 	return ingredient
-}
-
-type FurnaceRecipeData struct {
-	Block  string               `json:"block"`
-	Input  RecipeIngredientData `json:"input"`
-	Output ItemStackData        `json:"output"`
-}
-
-func furnaceRecipeData(r *protocol.FurnaceRecipe) FurnaceRecipeData {
-	return FurnaceRecipeData{
-		Input: recipeIngredientData(protocol.ItemDescriptorCount{
-			Count: 1,
-			Descriptor: &protocol.DefaultItemDescriptor{
-				NetworkID:     int16(r.InputType.NetworkID),
-				MetadataValue: int16(r.InputType.MetadataValue),
-			},
-		}),
-		Output: itemStackData(r.Output),
-		Block:  r.Block,
-	}
 }
 
 type PotionTypeRecipeData struct {
@@ -183,15 +145,15 @@ func potionTypeRecipeData(r protocol.PotionRecipe) PotionTypeRecipeData {
 		Input: recipeIngredientData(protocol.ItemDescriptorCount{
 			Count: 1,
 			Descriptor: &protocol.DefaultItemDescriptor{
-				NetworkID:     int16(r.InputPotionID),
-				MetadataValue: int16(r.InputPotionMetadata),
+				Name:          data.ItemNetworkIDToName[r.InputPotionID],
+				MetadataValue: r.InputPotionMetadata,
 			},
 		}),
 		Ingredient: recipeIngredientData(protocol.ItemDescriptorCount{
 			Count: 1,
 			Descriptor: &protocol.DefaultItemDescriptor{
-				NetworkID:     int16(r.ReagentItemID),
-				MetadataValue: int16(r.ReagentItemMetadata),
+				Name:          data.ItemNetworkIDToName[r.ReagentItemID],
+				MetadataValue: r.ReagentItemMetadata,
 			},
 		}),
 		Output: itemStackData(protocol.ItemStack{
@@ -215,7 +177,7 @@ func potionContainerChangeRecipeData(r protocol.PotionContainerChangeRecipe) Pot
 		Ingredient: recipeIngredientData(protocol.ItemDescriptorCount{
 			Count: 1,
 			Descriptor: &protocol.DefaultItemDescriptor{
-				NetworkID: int16(r.ReagentItemID),
+				Name: data.ItemNetworkIDToName[r.ReagentItemID],
 			},
 		}),
 		OutputItemName: data.ItemNetworkIDToName[r.OutputItemID],
@@ -357,10 +319,7 @@ type BiomeDefinition struct {
 }
 
 func newBiomeDefinition(definition protocol.BiomeDefinition, list []string) BiomeDefinition {
-	var biomeID uint16
-	if v, ok := definition.BiomeID.Value(); ok {
-		biomeID = v
-	}
+	biomeID := uint16(definition.BiomeID)
 	var tags []string
 	if v, ok := definition.Tags.Value(); ok {
 		tags = lo.Map(v, func(i uint16, _ int) string {
@@ -368,17 +327,13 @@ func newBiomeDefinition(definition protocol.BiomeDefinition, list []string) Biom
 		})
 	}
 	return BiomeDefinition{
-		BiomeID:          biomeID,
-		Temperature:      definition.Temperature,
-		Downfall:         definition.Downfall,
-		RedSporeDensity:  definition.RedSporeDensity,
-		BlueSporeDensity: definition.BlueSporeDensity,
-		AshDensity:       definition.AshDensity,
-		WhiteAshDensity:  definition.WhiteAshDensity,
-		Depth:            definition.Depth,
-		Scale:            definition.Scale,
-		MapWaterColour:   int32ToRGBA(definition.MapWaterColour),
-		Rain:             definition.Rain,
-		Tags:             tags,
+		BiomeID:        biomeID,
+		Temperature:    definition.Temperature,
+		Downfall:       definition.Downfall,
+		Depth:          definition.Depth,
+		Scale:          definition.Scale,
+		MapWaterColour: int32ToRGBA(definition.MapWaterColour),
+		Rain:           definition.Rain,
+		Tags:           tags,
 	}
 }

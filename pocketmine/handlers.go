@@ -10,7 +10,6 @@ import (
 	"github.com/df-mc/datagen/write"
 	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/nbt"
-	"github.com/sandertv/gophertunnel/minecraft/protocol"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
@@ -58,50 +57,37 @@ func HandleBiomeDefinitionList(pk *packet.BiomeDefinitionList) {
 
 func HandleCraftingData(pk *packet.CraftingData) {
 	recipes := make(map[string][]any)
-	for _, recipe := range pk.Recipes {
-		var key string
-		var value any
-		switch r := recipe.(type) {
-		case *protocol.ShapelessRecipe:
-			key = "shapeless_crafting"
-			value = shapelessRecipeData(r)
-		case *protocol.ShapedRecipe:
-			key = "shaped_crafting"
-			if !r.AssumeSymmetry {
-				key += "_asymmetric"
-			}
-			value = shapedRecipeData(r)
-		case *protocol.FurnaceRecipe:
-			key = "smelting"
-			value = furnaceRecipeData(r)
-		case *protocol.FurnaceDataRecipe:
-			key = "smelting"
-			value = furnaceRecipeData(&r.FurnaceRecipe)
-		case *protocol.MultiRecipe:
-			key = "special_hardcoded"
-			value = r.UUID.String()
-		case *protocol.ShulkerBoxRecipe:
-			key = "shapeless_shulker_box"
-			value = shapelessRecipeData(&r.ShapelessRecipe)
-		case *protocol.ShapelessChemistryRecipe:
-			key = "shapeless_chemistry"
-			value = shapelessRecipeData(&r.ShapelessRecipe)
-		case *protocol.ShapedChemistryRecipe:
-			key = "shaped_chemistry"
-			if !r.AssumeSymmetry {
-				key += "_asymmetric"
-			}
-			value = shapedRecipeData(&r.ShapedRecipe)
-		case *protocol.SmithingTransformRecipe:
-			key = "smithing"
-			value = smithingTransformRecipeData(r)
-		case *protocol.SmithingTrimRecipe:
-			key = "smithing_trim"
-			value = smithingTrimRecipeData(r)
-		default:
-			panic(fmt.Errorf("unknown recipe type %T", r))
+	for i := range pk.ShapelessRecipes {
+		recipes["shapeless_crafting"] = append(recipes["shapeless_crafting"], shapelessRecipeData(&pk.ShapelessRecipes[i]))
+	}
+	for i := range pk.ShapedRecipes {
+		key := "shaped_crafting"
+		if !pk.ShapedRecipes[i].AssumeSymmetry {
+			key += "_asymmetric"
 		}
-		recipes[key] = append(recipes[key], value)
+		recipes[key] = append(recipes[key], shapedRecipeData(&pk.ShapedRecipes[i]))
+	}
+	for i := range pk.MultiRecipes {
+		recipes["special_hardcoded"] = append(recipes["special_hardcoded"], pk.MultiRecipes[i].UUID.String())
+	}
+	for i := range pk.ShulkerBoxRecipes {
+		recipes["shapeless_shulker_box"] = append(recipes["shapeless_shulker_box"], shapelessRecipeData(&pk.ShulkerBoxRecipes[i].ShapelessRecipe))
+	}
+	for i := range pk.ShapelessChemistryRecipes {
+		recipes["shapeless_chemistry"] = append(recipes["shapeless_chemistry"], shapelessRecipeData(&pk.ShapelessChemistryRecipes[i].ShapelessRecipe))
+	}
+	for i := range pk.ShapedChemistryRecipes {
+		key := "shaped_chemistry"
+		if !pk.ShapedChemistryRecipes[i].AssumeSymmetry {
+			key += "_asymmetric"
+		}
+		recipes[key] = append(recipes[key], shapedRecipeData(&pk.ShapedChemistryRecipes[i].ShapedRecipe))
+	}
+	for i := range pk.SmithingTransformRecipes {
+		recipes["smithing"] = append(recipes["smithing"], smithingTransformRecipeData(&pk.SmithingTransformRecipes[i]))
+	}
+	for i := range pk.SmithingTrimRecipes {
+		recipes["smithing_trim"] = append(recipes["smithing_trim"], smithingTrimRecipeData(&pk.SmithingTrimRecipes[i]))
 	}
 	for _, r := range pk.PotionRecipes {
 		recipes["potion_type"] = append(recipes["potion_type"], potionTypeRecipeData(r))
@@ -146,7 +132,7 @@ func HandleCreativeContent(pk *packet.CreativeContent) {
 	var content CreativeItems
 	for _, group := range pk.Groups {
 		content.Groups = append(content.Groups, CreativeGroup{
-			CategoryID:   group.Category,
+			CategoryID:   int32(group.Category),
 			CategoryName: group.Name,
 			Icon:         itemStackData(group.Icon),
 		})

@@ -13,8 +13,25 @@ for [Dragonfly](https://github.com/df-mc/dragonfly) updates.
 2. Make sure `data/block_state_meta_map.json` and `data/canonical_block_states.nbt` are up-to-date
    from [BedrockData](https://github.com/pmmp/BedrockData) (or newly generated
    from [bds-mod-mapping](https://github.com/pmmp/bds-mod-mapping))
-3. Run `go run main.go` and authenticate with Xbox if it is your first time running the tool
+3. Run `go run .` and authenticate with Xbox if it is your first time running the tool
 4. Once the data is generated, copy the required folders from `output` into the desired location
+
+Use `-address` to connect to BDS on a non-default port. When BDS has `online-mode=false`, use `-offline` to connect
+without Xbox authentication.
+
+### Updating Dragonfly block states
+
+Dragonfly's block registry must be updated before capturing creative content so that BDS block runtime IDs resolve
+against the matching palette. Convert Cloudburst's `block_palette.nbt` before running the packet capture:
+
+```shell
+go run ./cmd/blockstates \
+  -input /path/to/block_palette.nbt \
+  -output /path/to/dragonfly/server/world/block_states.nbt
+```
+
+The input is Cloudburst's gzip-compressed big-endian palette. The generated output is Dragonfly's concatenated
+network-little-endian block-state format.
 
 > [!NOTE]
 > All `.nbt` files use the network-encoding variant of NBT.
@@ -29,11 +46,12 @@ for [Dragonfly](https://github.com/df-mc/dragonfly) updates.
 |---------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------|
 | [server/item/creative/creative_items.nbt](https://github.com/df-mc/dragonfly/blob/master/server/item/creative/creative_items.nbt)     | This file contains the creative groups and items in the vanilla order               |
 | [server/item/recipe/crafting_data.nbt](https://github.com/df-mc/dragonfly/blob/master/server/item/recipe/crafting_data.nbt)           | This file contains a list of shaped and shapeless crafting recipes                  |
-| [server/item/recipe/furnace_data.nbt](https://github.com/df-mc/dragonfly/blob/master/server/item/recipe/furnace_data.nbt)             | This file contains a list of furnace recipes                                        |
 | [server/item/recipe/potion_data.nbt](https://github.com/df-mc/dragonfly/blob/master/server/item/recipe/potion_data.nbt)               | This file contains a list of brewing stand recipes                                  |
 | [server/item/recipe/smithing_data.nbt](https://github.com/df-mc/dragonfly/blob/master/server/item/recipe/smithing_data.nbt)           | This file contains a list of recipes for the smithing table, excluding armour trims |
 | [server/item/recipe/smithing_trim_data.nbt](https://github.com/df-mc/dragonfly/blob/master/server/item/recipe/smithing_trim_data.nbt) | This file contains a list of recipes for armour trims in the smithing table         |
 | [server/world/vanilla_items.nbt](https://github.com/df-mc/dragonfly/blob/master/server/world/vanilla_items.nbt)                       | This file contains a list of all vanilla items with their runtime ID and version    |
+
+Furnace recipes are not present in the 1.26.40 `CraftingData` packet and therefore cannot be refreshed by this tool.
 
 ## PMMP Data (output/pocketmine)
 

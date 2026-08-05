@@ -2,13 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/df-mc/datagen/dragonfly"
 	"github.com/df-mc/datagen/pocketmine"
-	_ "github.com/df-mc/dragonfly/server/world"
+	"github.com/df-mc/dragonfly/server/world"
 	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/auth"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
@@ -16,12 +17,18 @@ import (
 )
 
 func main() {
-	_ = os.RemoveAll("output")
+	address := flag.String("address", "127.0.0.1:19132", "Bedrock server address")
+	offline := flag.Bool("offline", false, "connect without Xbox authentication")
+	flag.Parse()
 
-	dialer := minecraft.Dialer{
-		TokenSource: tokenSource(),
+	_ = os.RemoveAll("output")
+	world.DefaultBlockRegistry.Finalize()
+
+	dialer := minecraft.Dialer{}
+	if !*offline {
+		dialer.TokenSource = tokenSource()
 	}
-	conn, err := dialer.Dial("raknet", "127.0.0.1:19132")
+	conn, err := dialer.Dial("raknet", *address)
 	if err != nil {
 		panic(err)
 	}

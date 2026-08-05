@@ -5,12 +5,7 @@ import (
 	"math"
 
 	"github.com/df-mc/datagen/data"
-	"github.com/df-mc/dragonfly/server/world/chunk"
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
-)
-
-const (
-	CurrentBlockVersion = (1 << 24) | (21 << 16) | (20 << 8) | 6 // 18158598
 )
 
 // CraftingRecipes represents the structure for crafting_data.nbt that dragonfly uses.
@@ -38,7 +33,7 @@ type CreativeItem struct {
 	Meta            int16          `nbt:"meta,omitempty"`
 	NBT             map[string]any `nbt:"nbt,omitempty"`
 	BlockProperties map[string]any `nbt:"block_properties,omitempty"`
-	GroupIndex      int32          `nbt:"group_index,omitempty""`
+	GroupIndex      int32          `nbt:"group_index,omitempty"`
 }
 
 type VanillaItemEntry struct {
@@ -64,30 +59,6 @@ type RecipeOutputItem struct {
 	Count   int16          `nbt:"count"`
 	State   map[string]any `nbt:"block,omitempty"`
 	NBTData map[string]any `nbt:"data,omitempty"`
-}
-
-// FurnaceRecipe represents the structure of a shaped recipe in dragonfly, used in crafting_data.nbt.
-type FurnaceRecipe struct {
-	Input  RecipeInputItem  `nbt:"input,omitempty"`
-	Output RecipeOutputItem `nbt:"output,omitempty"`
-	Block  string           `nbt:"block,omitempty"`
-}
-
-// NewFurnaceRecipe creates a new FurnaceRecipe from a protocol.FurnaceRecipe. It converts the input and output
-// items to the RecipeInputItem and RecipeOutputItem structures.
-func NewFurnaceRecipe(recipe protocol.FurnaceRecipe) FurnaceRecipe {
-	return FurnaceRecipe{
-		Input: newInputItem(protocol.ItemDescriptorCount{
-			Descriptor: &protocol.DefaultItemDescriptor{
-				NetworkID:     int16(recipe.InputType.NetworkID),
-				MetadataValue: int16(recipe.InputType.MetadataValue),
-			},
-			Count: 1,
-		}, false),
-		Output: newOutputItem(recipe.Output),
-		Block:  recipe.Block,
-	}
-
 }
 
 // ShapedRecipe represents the structure of a shaped recipe in dragonfly, used in crafting_data.nbt.
@@ -164,15 +135,15 @@ type PotionRecipe struct {
 func NewPotionRecipe(recipe protocol.PotionRecipe) PotionRecipe {
 	input := protocol.ItemDescriptorCount{
 		Descriptor: &protocol.DefaultItemDescriptor{
-			NetworkID:     int16(recipe.InputPotionID),
-			MetadataValue: int16(recipe.InputPotionMetadata),
+			Name:          data.ItemNetworkIDToName[recipe.InputPotionID],
+			MetadataValue: recipe.InputPotionMetadata,
 		},
 		Count: 1,
 	}
 	reagent := protocol.ItemDescriptorCount{
 		Descriptor: &protocol.DefaultItemDescriptor{
-			NetworkID:     int16(recipe.ReagentItemID),
-			MetadataValue: int16(recipe.ReagentItemMetadata),
+			Name:          data.ItemNetworkIDToName[recipe.ReagentItemID],
+			MetadataValue: recipe.ReagentItemMetadata,
 		},
 		Count: 1,
 	}
@@ -199,7 +170,7 @@ type PotionContainerChangeRecipe struct {
 func NewPotionContainerChangeRecipe(recipe protocol.PotionContainerChangeRecipe) PotionContainerChangeRecipe {
 	reagent := protocol.ItemDescriptorCount{
 		Descriptor: &protocol.DefaultItemDescriptor{
-			NetworkID: int16(recipe.ReagentItemID),
+			Name: data.ItemNetworkIDToName[recipe.ReagentItemID],
 		},
 		Count: 1,
 	}
@@ -222,17 +193,12 @@ func newInputItem(input protocol.ItemDescriptorCount, includeAir bool) RecipeInp
 		}
 		panic("invalid item descriptor")
 	case *protocol.DefaultItemDescriptor:
-		item.Name = data.ItemNetworkIDToName[int32(it.NetworkID)]
-		item.Meta = int32(it.MetadataValue)
+		item.Name = it.Name
+		item.Meta = it.MetadataValue
 	case *protocol.MoLangItemDescriptor:
 		panic("unsupported molang item descriptor")
 	case *protocol.ItemTagItemDescriptor:
 		item.Tag = it.Tag
-	case *protocol.DeferredItemDescriptor:
-		item.Name = it.Name
-		item.Meta = int32(it.MetadataValue)
-	case *protocol.ComplexAliasItemDescriptor:
-		item.Name = it.Name
 	default:
 		panic(fmt.Errorf("unknown item descriptor %T", it))
 	}
@@ -257,17 +223,10 @@ func newOutputItem(output protocol.ItemStack) RecipeOutputItem {
 		Count:   int16(output.Count),
 		NBTData: output.NBTData,
 	}
-	name, props, ok := chunk.RuntimeIDToState(uint32(output.BlockRuntimeID))
-	if ok {
-		if itemMetas, ok := data.ItemMetaToBlockState[item.Name]; ok {
-			if _, ok := itemMetas[item.Meta]; ok {
-				item.Meta = 0
-				item.State = map[string]any{
-					"name":    name,
-					"states":  props,
-					"version": int32(CurrentBlockVersion),
-				}
-			}
+	if itemMetas, ok := data.ItemMetaToBlockState[item.Name]; ok {
+		if state, ok := itemMetas[item.Meta]; ok {
+			item.Meta = 0
+			item.State = state
 		}
 	}
 	return item
