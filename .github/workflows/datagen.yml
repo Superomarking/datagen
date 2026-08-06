@@ -132,6 +132,18 @@ jobs:
       - name: Run datagen
         run: |
           go build -o datagen-bin .
+
+          echo "--- diagnostics ---"
+          if kill -0 "$(cat bds/bds.pid)" 2>/dev/null; then
+            echo "BDS process is alive"
+          else
+            echo "::error::BDS process is dead"
+            tail -40 bds/bds.log
+            exit 1
+          fi
+          ss -ulnp || true
+          echo "-------------------"
+
           # Some BDS builds (e.g. 1.26.50 preview) bind a single IPv6 socket
           # on 19132 and refuse IPv4 loopback, while stable builds listen on
           # IPv4. Pick the address based on what BDS reported.
