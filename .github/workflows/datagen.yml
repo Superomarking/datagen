@@ -7,6 +7,11 @@ on:
         description: "BDS version (e.g. 1.21.100.7). Leave empty to use the latest release."
         required: false
         default: ""
+      preview:
+        description: "Use a preview build of BDS"
+        type: boolean
+        required: false
+        default: false
       dry-run:
         description: "Skip pushing the generations to the data repo"
         type: boolean
@@ -43,12 +48,19 @@ jobs:
       - name: Resolve BDS download URL
         id: bds
         run: |
+          if [ "${{ inputs.preview }}" = "true" ]; then
+            BIN_DIR="bin-linux-preview"
+            DOWNLOAD_TYPE="serverBedrockPreviewLinux"
+          else
+            BIN_DIR="bin-linux"
+            DOWNLOAD_TYPE="serverBedrockLinux"
+          fi
           if [ -n "${{ inputs.bds-version }}" ]; then
-            URL="https://www.minecraft.net/bedrockdedicatedserver/bin-linux/bedrock-server-${{ inputs.bds-version }}.zip"
+            URL="https://www.minecraft.net/bedrockdedicatedserver/${BIN_DIR}/bedrock-server-${{ inputs.bds-version }}.zip"
           else
             URL=$(curl -fsSL -A "$BDS_USER_AGENT" \
               "https://net-secondary.web.minecraft-services.net/api/v1.0/download/links" \
-              | jq -r '.result.links[] | select(.downloadType == "serverBedrockLinux") | .downloadUrl')
+              | jq -r --arg t "$DOWNLOAD_TYPE" '.result.links[] | select(.downloadType == $t) | .downloadUrl')
           fi
           if [ -z "$URL" ]; then
             echo "::error::could not resolve a BDS download URL"
