@@ -101,6 +101,10 @@ jobs:
           set_prop white-list false
           # datagen requires real (non-hashed) block network IDs.
           set_prop block-network-ids-are-hashes false
+          # 1.26.50+ defaults to transport=nethernet (WebRTC) and no longer
+          # binds a RakNet socket on 19132; datagen dials RakNet. Harmlessly
+          # ignored by older builds without this property.
+          set_prop transport raknet
           # A flat world generates much faster on the runner.
           set_prop level-type FLAT
 
