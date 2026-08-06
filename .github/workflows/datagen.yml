@@ -1,0 +1,190 @@
+name: Generate data
+
+on:
+  workflow_dispatch:
+    inputs:
+      bds-version:
+        description: "BDS version (e.g. 1.21.100.7). Leave empty to use the latest release."
+        required: false
+        default: ""
+      dry-run:
+        description: "Skip pushing the generations to the data repo"
+        type: boolean
+        required: false
+        default: false
+
+# Prevent two runs from racing each other when pushing to the data repo.
+concurrency:
+  group: datagen
+  cancel-in-progress: false
+
+env:
+  # Repository that receives the generated data. Requires a PAT with write
+  # access to it, stored in the DATA_REPO_TOKEN secret.
+  TARGET_REPO: df-mc/bedrock-data
+  TARGET_BRANCH: main
+  # Subdirectory inside the target repo to place output/ in ("." for the root).
+  TARGET_DIR: .
+  # BDS downloads are blocked without a browser-like User-Agent.
+  BDS_USER_AGENT: "Mozilla/5.0 (X11; Linux x86_64) datagen-ci"
+
+jobs:
+  datagen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve BDS download URL
+        id: bds
+        run: |
+          if [ -n "${{ inputs.bds-version }}" ]; then
+            URL="https://www.minecraft.net/bedrockdedicatedserver/bin-linux/bedrock-server-${{ inputs.bds-version }}.zip"
+          else
+            URL=$(curl -fsSL -A "$BDS_USER_AGENT" \
+              "https://net-secondary.web.minecraft-services.net/api/v1.0/download/links" \
+              | jq -r '.result.links[] | select(.downloadType == "serverBedrockLinux") | .downloadUrl')
+          fi
+          if [ -z "$URL" ]; then
+            echo "::error::could not resolve a BDS download URL"
+            exit 1
+          fi
+          VERSION=$(basename "$URL" .zip | sed 's/^bedrock-server-//')
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Using BDS $VERSION ($URL)"
+
+      - name: Cache BDS download
+        id: cache-bds
+        uses: actions/cache@v4
+        with:
+          path: bedrock-server.zip
+          key: bds-${{ steps.bds.outputs.version }}
+
+      - name: Download BDS
+        if: steps.cache-bds.outputs.cache-hit != 'true'
+        run: curl -fSL -A "$BDS_USER_AGENT" -o bedrock-server.zip "${{ steps.bds.outputs.url }}"
+
+      - name: Set up BDS
+        run: |
+          mkdir bds
+          unzip -q bedrock-server.zip -d bds
+
+          set_prop() {
+            if grep -q "^$1=" bds/server.properties; then
+              sed -i "s/^$1=.*/$1=$2/" bds/server.properties
+            else
+              echo "$1=$2" >> bds/server.properties
+            fi
+          }
+          # datagen connects with -offline, so Xbox auth must be disabled.
+          set_prop online-mode false
+          # datagen requires real (non-hashed) block network IDs.
+          set_prop block-network-ids-are-hashes false
+          # A flat world generates much faster on the runner.
+          set_prop level-type FLAT
+
+          # Chemistry/education recipes are only sent when the world has
+          # education features and experiments enabled, which live in
+          # level.dat. Commit such a pre-configured world to
+          # .github/bds/worlds/<level-name> to have it used here.
+          if [ -d .github/bds/worlds ]; then
+            cp -r .github/bds/worlds bds/worlds
+          else
+            echo "::warning::no pre-configured world at .github/bds/worlds; education/experiment recipes may be missing"
+          fi
+
+      - name: Start BDS
+        working-directory: bds
+        run: |
+          LD_LIBRARY_PATH=. ./bedrock_server > bds.log 2>&1 &
+          echo $! > bds.pid
+          if ! timeout 120 bash -c 'until grep -q "Server started" bds.log 2>/dev/null; do sleep 1; done'; then
+            echo "::error::BDS did not start within 120 seconds"
+            cat bds.log
+            exit 1
+          fi
+          echo "BDS is up"
+
+      - name: Run datagen
+        run: |
+          go build -o datagen-bin .
+          # datagen keeps reading packets until the connection drops; all data
+          # is written as soon as the packets arrive, so cut it off after 90
+          # seconds. Exit code 124 means "killed by timeout", which is the
+          # expected way for this to end.
+          set +e
+          timeout 90 ./datagen-bin -offline
+          code=$?
+          set -e
+          if [ "$code" -ne 124 ] && [ "$code" -ne 0 ]; then
+            echo "::error::datagen exited with code $code"
+            exit "$code"
+          fi
+
+      - name: Verify output
+        run: |
+          for f in \
+            output/dragonfly/server/item/creative/creative_items.nbt \
+            output/dragonfly/server/item/recipe/crafting_data.nbt \
+            output/dragonfly/server/world/vanilla_items.nbt \
+            output/pocketmine/creativeitems.json \
+            output/pocketmine/entity_identifiers.nbt \
+            output/pocketmine/recipes/shaped_crafting.json
+          do
+            if [ ! -f "$f" ]; then
+              echo "::error::missing expected file $f"
+              exit 1
+            fi
+          done
+          find output -type f | sort
+
+      - name: Stop BDS
+        if: always()
+        run: |
+          if [ -f bds/bds.pid ]; then
+            kill "$(cat bds/bds.pid)" 2>/dev/null || true
+          fi
+
+      - name: Upload BDS log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bds-log
+          path: bds/bds.log
+          if-no-files-found: ignore
+
+      - name: Upload generations artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generations-${{ steps.bds.outputs.version }}
+          path: output/
+
+      - name: Push generations to data repo
+        if: ${{ !inputs.dry-run }}
+        env:
+          TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::DATA_REPO_TOKEN secret is not set"
+            exit 1
+          fi
+          git clone --depth 1 --branch "$TARGET_BRANCH" \
+            "https://x-access-token:${TOKEN}@github.com/${TARGET_REPO}.git" target
+          mkdir -p "target/$TARGET_DIR"
+          rsync -a --delete --exclude '.git' output/ "target/$TARGET_DIR/"
+          cd target
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to push"
+            exit 0
+          fi
+          git commit -m "Update generated data for BDS ${{ steps.bds.outputs.version }}"
+          git push origin "$TARGET_BRANCH"
