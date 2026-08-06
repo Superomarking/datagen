@@ -132,12 +132,20 @@ jobs:
       - name: Run datagen
         run: |
           go build -o datagen-bin .
+          # Some BDS builds (e.g. 1.26.50 preview) bind a single IPv6 socket
+          # on 19132 and refuse IPv4 loopback, while stable builds listen on
+          # IPv4. Pick the address based on what BDS reported.
+          ADDR="127.0.0.1:19132"
+          if grep -q 'Accepting clients on \[::\]' bds/bds.log; then
+            ADDR="[::1]:19132"
+          fi
+          echo "Connecting to BDS at $ADDR"
           # datagen keeps reading packets until the connection drops; all data
           # is written as soon as the packets arrive, so cut it off after 90
           # seconds. Exit code 124 means "killed by timeout", which is the
           # expected way for this to end.
           set +e
-          timeout 90 ./datagen-bin -offline
+          timeout 90 ./datagen-bin -offline -address "$ADDR"
           code=$?
           set -e
           if [ "$code" -ne 124 ] && [ "$code" -ne 0 ]; then
